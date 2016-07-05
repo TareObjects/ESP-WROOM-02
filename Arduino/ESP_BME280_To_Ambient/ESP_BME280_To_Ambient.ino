@@ -102,14 +102,14 @@ void setupAmbient() {
 struct OneData_t {
   float temperature;
   float humidity;
-  uint16_t pressure;
+  float pressure;
   uint16_t airQuality;
   time_t created;
-//  char created[kMaxLengthCreated];
 };
 
-#define kMaxDataArea  (512 - 4 - sizeof(int))
+#define kMaxDataArea  (512 - 4 - sizeof(int) - sizeof(time_t))
 #define kMaxBlocks    ((kMaxDataArea - sizeof(int)) / sizeof(OneData_t))
+#define kMaxSend      24
 
 
 typedef struct {
@@ -135,6 +135,8 @@ Storage storage;
 //  Storageを読み込む。もしCRCが不一致なら初期化
 //
 bool readStorageAndInitIfNeeded() {
+  Serial.print("storage size = ");
+  Serial.println(sizeof(storage));
   bool ok = system_rtc_mem_read(kOffset_CRC, &storage, sizeof(storage));
   if (!ok) {
     Serial.println("readStorageAndInitIfNeeded : mem_read fail");
@@ -229,12 +231,10 @@ void setup() {
 
   //  RTCが初期化されていないならWifiに接続してsntpで時刻を取得
   rtc.setup(0x20);
-  if (rtc.isPowerOn()) {
+  if (rtc.isPowerOn() || storage.uni.datas.nextAdjust == 0) {
     Serial.println("RTC is not initilized");
     startWifi();
-    time_t forRTC = getTimestamp();
-    rtc.writeRTC(&forRTC);
-    Serial.println(forRTC);
+    adjustRTCwithSNTP();
   } else {
     Serial.println("RTC is already initalized");
   }
@@ -294,12 +294,14 @@ void setup() {
   pData->pressure    = pressure;
   pData->airQuality  = airQuality;
   pData->created     = timestamp;
-  
+
   storage.uni.datas.counter = ++n;
 
-  if (n >= kMaxBlocks/2) {
+  int nMaxSend = kMaxBlocks > kMaxSend ? kMaxSend : kMaxBlocks;
+  
+  if (n >= nMaxSend) {
     startWifi();
-    
+
     setupAmbient();
     if (sendStorageToAmbient()) {
       Serial.println("sendStorageToAmbient : OK");
@@ -312,16 +314,13 @@ void setup() {
     time_t next = storage.uni.datas.nextAdjust;
     time_t rtcTime;
     rtc.readRTC(&rtcTime);
-    Serial.print(next);Serial.println(rtcTime);
+    Serial.print("next, rtcTime = ");
+    Serial.print(next);
     Serial.print(",");
-    
-    if (next == 0 || next < rtcTime) {
-      Serial.println("getti<ng sntp");
-      rtcTime = getTimestamp(); //sntp
-      rtc.writeRTC(&rtcTime);
+    Serial.println(rtcTime);
 
-      Serial.println("new adjust timing has been set");
-      storage.uni.datas.nextAdjust = rtcTime + 24 * 3600 * 1000;  // 1day later
+    if (next == 0 || next < rtcTime) {
+      adjustRTCwithSNTP();
     }
   }
 
@@ -329,6 +328,24 @@ void setup() {
 
   ESP.deepSleep(kInterval * 1000 * 1000, WAKE_RF_DEFAULT);
   delay(1000);
+}
+
+
+void adjustRTCwithSNTP() {
+  Serial.println("getting sntp");
+  
+  time_t sntpTime = getTimestamp(); //sntp
+
+  time_t rtcTime;
+  rtc.readRTC(&rtcTime);
+  
+  Serial.print("rtc - sntp = ");
+  Serial.println(rtcTime - sntpTime);
+  
+  rtc.writeRTC(&sntpTime);
+
+  Serial.println("new adjust timing has been set");
+  storage.uni.datas.nextAdjust = rtcTime + 24 * 3600 * 1000;  // 1day later
 }
 
 
@@ -399,7 +416,7 @@ bool sendStorageToAmbient() {
       Serial.println("alloc fail!");
     }
   }
-  
+
   JsonObject& root = jsonBuffer.createObject();
   root["writeKey"] = ambient_write_key_ESP_BME280_To_Ambient;    // ambientのapi write key
 
@@ -415,7 +432,7 @@ bool sendStorageToAmbient() {
     one["created"] = bufCreated[i];
     one["d1"] = pSrc->temperature;
     one["d2"] = pSrc->humidity;
-    one["d3"] = pSrc->pressure;
+    one["d3"] = pSrc->pressure / 10.0;
     one["d4"] = pSrc->airQuality;
     dataArray.add(one);
   }
@@ -436,7 +453,7 @@ bool sendStorageToAmbient() {
   for (int i = 0; i < n; i++) {
     os_free(bufCreated[i]);
   }
-  
+
   return true;
 }
 
