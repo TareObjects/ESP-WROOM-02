@@ -370,8 +370,8 @@ void drawAndSend() {
   delay(10);
   temp      = bme.readTempC();
   humidity  = bme.readFloatHumidity();
-  pressure  = bme.readFloatPressure() / 100;
-
+  pressure  = bme.readFloatPressure() / 100.0;
+  
   //  OLEDへ表示
   display.clear();
 
@@ -403,7 +403,7 @@ void drawAndSend() {
 
 const int kMaxJsonBuffer = kMaxBlocks * 100;
 
-StaticJsonBuffer<kMaxJsonBuffer> jsonBuffer;
+StaticJsonBuffer<kMaxJsonBuffer*2> jsonBuffer;
 char jsonPrintBuffer[kMaxJsonBuffer];
 
 bool sendStorageToAmbient() {
